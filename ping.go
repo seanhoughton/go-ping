@@ -44,6 +44,7 @@
 package ping
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -70,7 +71,7 @@ var (
 )
 
 // NewPinger returns a new Pinger struct pointer
-func NewPinger(addr string) (*Pinger, error) {
+func NewPinger(addr string, options ...PingerOption) (*Pinger, error) {
 	ipaddr, err := net.ResolveIPAddr("ip", addr)
 	if err != nil {
 		return nil, err
@@ -84,34 +85,67 @@ func NewPinger(addr string) (*Pinger, error) {
 	}
 
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return &Pinger{
-		ipaddr:   ipaddr,
-		addr:     addr,
-		Interval: time.Second,
-		Timeout:  time.Second * 100000,
-		Count:    -1,
-		id:       r.Intn(math.MaxInt16),
-		network:  "udp",
-		ipv4:     ipv4,
-		Size:     timeSliceLength,
-		Tracker:  r.Int63n(math.MaxInt64),
-		done:     make(chan bool),
-	}, nil
+	pinger := &Pinger{
+		ipaddr:     ipaddr,
+		addr:       addr,
+		interval:   time.Second,
+		count:      -1,
+		id:         r.Intn(math.MaxInt16),
+		network:    "udp",
+		ipv4:       ipv4,
+		packetSize: timeSliceLength,
+		Tracker:    r.Int63n(math.MaxInt64),
+		done:       make(chan bool),
+	}
+
+	for _, option := range options {
+		err := option(pinger)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return pinger, nil
+}
+
+// PingerOption allows you to customize the pinger instance
+type PingerOption func(*Pinger) error
+
+// CountOption tells pinger to stop after sending (and receiving) Count echo
+// packets. If this option is not specified, pinger will operate until
+// interrupted.
+func CountOption(count int) PingerOption {
+	return func(pinger *Pinger) error {
+		pinger.count = count
+		return nil
+	}
+}
+
+// IntervalOption is the wait time between each packet send. Default is 1s.
+func IntervalOption(interval time.Duration) PingerOption {
+	return func(pinger *Pinger) error {
+		pinger.interval = interval
+		return nil
+	}
+}
+
+// PacketSizeOption sets the size of packet being sent
+func PacketSizeOption(packetSize int) PingerOption {
+	return func(pinger *Pinger) error {
+		pinger.packetSize = packetSize
+		return nil
+	}
 }
 
 // Pinger represents ICMP packet sender/receiver
 type Pinger struct {
 	// Interval is the wait time between each packet send. Default is 1s.
-	Interval time.Duration
-
-	// Timeout specifies a timeout before ping exits, regardless of how many
-	// packets have been received.
-	Timeout time.Duration
+	interval time.Duration
 
 	// Count tells pinger to stop after sending (and receiving) Count echo
 	// packets. If this option is not specified, pinger will operate until
 	// interrupted.
-	Count int
+	count int
 
 	// Debug runs in debug mode
 	Debug bool
@@ -132,7 +166,7 @@ type Pinger struct {
 	OnFinish func(*Statistics)
 
 	// Size of packet being sent
-	Size int
+	packetSize int
 
 	// Tracker: Used to uniquely identify packet when non-priviledged
 	Tracker int64
@@ -266,11 +300,11 @@ func (p *Pinger) Privileged() bool {
 // Run runs the pinger. This is a blocking function that will exit when it's
 // done. If Count or Interval are not specified, it will run continuously until
 // it is interrupted.
-func (p *Pinger) Run() {
-	p.run()
+func (p *Pinger) Run(ctx context.Context) {
+	p.run(ctx)
 }
 
-func (p *Pinger) run() {
+func (p *Pinger) run(ctx context.Context) {
 	var conn *icmp.PacketConn
 	if p.ipv4 {
 		if conn = p.listen(ipv4Proto[p.network], p.source); conn == nil {
@@ -295,9 +329,7 @@ func (p *Pinger) run() {
 		fmt.Println(err.Error())
 	}
 
-	timeout := time.NewTicker(p.Timeout)
-	defer timeout.Stop()
-	interval := time.NewTicker(p.Interval)
+	interval := time.NewTicker(p.interval)
 	defer interval.Stop()
 
 	for {
@@ -305,12 +337,12 @@ func (p *Pinger) run() {
 		case <-p.done:
 			wg.Wait()
 			return
-		case <-timeout.C:
+		case <-ctx.Done():
 			close(p.done)
 			wg.Wait()
 			return
 		case <-interval.C:
-			if p.Count > 0 && p.PacketsSent >= p.Count {
+			if p.count > 0 && p.PacketsSent >= p.count {
 				continue
 			}
 			err = p.sendICMP(conn)
@@ -323,7 +355,7 @@ func (p *Pinger) run() {
 				fmt.Println("FATAL: ", err.Error())
 			}
 		}
-		if p.Count > 0 && p.PacketsRecv >= p.Count {
+		if p.count > 0 && p.PacketsRecv >= p.count {
 			close(p.done)
 			wg.Wait()
 			return
@@ -476,7 +508,7 @@ func (p *Pinger) processPacket(recv *packet) error {
 		}
 		outPkt.Rtt = time.Since(bytesToTime(data.Bytes))
 		outPkt.Seq = pkt.Seq
-		p.PacketsRecv += 1
+		p.PacketsRecv++
 	default:
 		// Very bad, not sure how this can happen
 		return fmt.Errorf("Error, invalid ICMP echo reply. Body type: %T, %s",
@@ -511,8 +543,8 @@ func (p *Pinger) sendICMP(conn *icmp.PacketConn) error {
 	}
 
 	t := timeToBytes(time.Now())
-	if p.Size-timeSliceLength != 0 {
-		t = append(t, byteSliceOfSize(p.Size-timeSliceLength)...)
+	if p.packetSize-timeSliceLength != 0 {
+		t = append(t, byteSliceOfSize(p.packetSize-timeSliceLength)...)
 	}
 
 	data, err := json.Marshal(IcmpData{Bytes: t, Tracker: p.Tracker})
@@ -542,8 +574,8 @@ func (p *Pinger) sendICMP(conn *icmp.PacketConn) error {
 				}
 			}
 		}
-		p.PacketsSent += 1
-		p.sequence += 1
+		p.PacketsSent++
+		p.sequence++
 		break
 	}
 	return nil

@@ -319,19 +319,22 @@ func (p *Pinger) Privileged() bool {
 // Run runs the pinger. This is a blocking function that will exit when it's
 // done. If Count or Interval are not specified, it will run continuously until
 // it is interrupted.
-func (p *Pinger) Run(ctx context.Context) {
-	p.run(ctx)
+func (p *Pinger) Run(ctx context.Context) error {
+	return p.run(ctx)
 }
 
-func (p *Pinger) run(ctx context.Context) {
+func (p *Pinger) run(ctx context.Context) error {
 	var conn *icmp.PacketConn
+	var err error
 	if p.ipv4 {
-		if conn = p.listen(ipv4Proto[p.network], p.source); conn == nil {
-			return
+		conn, err = p.listen(ipv4Proto[p.network], p.source)
+		if err != nil {
+			return err
 		}
 	} else {
-		if conn = p.listen(ipv6Proto[p.network], p.source); conn == nil {
-			return
+		conn, err = p.listen(ipv6Proto[p.network], p.source)
+		if err != nil {
+			return err
 		}
 	}
 	defer conn.Close()
@@ -343,9 +346,9 @@ func (p *Pinger) run(ctx context.Context) {
 	wg.Add(1)
 	go p.recvICMP(conn, recv, &wg)
 
-	err := p.sendICMP(conn)
+	err = p.sendICMP(conn)
 	if err != nil {
-		fmt.Println(err.Error())
+		return err
 	}
 
 	interval := time.NewTicker(p.interval)
@@ -355,11 +358,11 @@ func (p *Pinger) run(ctx context.Context) {
 		select {
 		case <-p.done:
 			wg.Wait()
-			return
+			return nil
 		case <-ctx.Done():
 			close(p.done)
 			wg.Wait()
-			return
+			return nil
 		case <-interval.C:
 			if p.count > 0 && p.PacketsSent >= p.count {
 				continue
@@ -377,7 +380,7 @@ func (p *Pinger) run(ctx context.Context) {
 		if p.count > 0 && p.PacketsRecv >= p.count {
 			close(p.done)
 			wg.Wait()
-			return
+			return nil
 		}
 	}
 }
@@ -600,14 +603,13 @@ func (p *Pinger) sendICMP(conn *icmp.PacketConn) error {
 	return nil
 }
 
-func (p *Pinger) listen(netProto string, source string) *icmp.PacketConn {
+func (p *Pinger) listen(netProto string, source string) (*icmp.PacketConn, error) {
 	conn, err := icmp.ListenPacket(netProto, source)
 	if err != nil {
-		fmt.Printf("Error listening for ICMP packets: %s\n", err.Error())
 		close(p.done)
-		return nil
+		return nil, fmt.Errorf("Error listening for ICMP packets: %v", err)
 	}
-	return conn
+	return conn, nil
 }
 
 func byteSliceOfSize(n int) []byte {

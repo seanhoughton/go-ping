@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"time"
 
-	"github.com/sparrc/go-ping"
+	"github.com/seanhoughton/go-ping"
 )
 
 var usage = `
@@ -49,7 +50,24 @@ func main() {
 	}
 
 	host := flag.Arg(0)
-	pinger, err := ping.NewPinger(host)
+
+	options := []ping.PingerOption{
+		ping.RecvFuncOption(func(pkt *ping.Packet) {
+			fmt.Printf("%d bytes from %s: icmp_seq=%d time=%v\n",
+				pkt.Nbytes, pkt.IPAddr, pkt.Seq, pkt.Rtt)
+		}),
+		ping.FinishFuncOption(func(stats *ping.Statistics) {
+			fmt.Printf("\n--- %s ping statistics ---\n", stats.Addr)
+			fmt.Printf("%d packets transmitted, %d packets received, %v%% packet loss\n",
+				stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss)
+			fmt.Printf("round-trip min/avg/max/stddev = %v/%v/%v/%v\n",
+				stats.MinRtt, stats.AvgRtt, stats.MaxRtt, stats.StdDevRtt)
+		}),
+		ping.CountOption(*count),
+		ping.IntervalOption(*interval),
+	}
+
+	pinger, err := ping.NewPinger(host, options...)
 	if err != nil {
 		fmt.Printf("ERROR: %s\n", err.Error())
 		return
@@ -59,28 +77,16 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	go func() {
-		for _ = range c {
+		for range c {
 			pinger.Stop()
 		}
 	}()
 
-	pinger.OnRecv = func(pkt *ping.Packet) {
-		fmt.Printf("%d bytes from %s: icmp_seq=%d time=%v\n",
-			pkt.Nbytes, pkt.IPAddr, pkt.Seq, pkt.Rtt)
-	}
-	pinger.OnFinish = func(stats *ping.Statistics) {
-		fmt.Printf("\n--- %s ping statistics ---\n", stats.Addr)
-		fmt.Printf("%d packets transmitted, %d packets received, %v%% packet loss\n",
-			stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss)
-		fmt.Printf("round-trip min/avg/max/stddev = %v/%v/%v/%v\n",
-			stats.MinRtt, stats.AvgRtt, stats.MaxRtt, stats.StdDevRtt)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
 
-	pinger.Count = *count
-	pinger.Interval = *interval
-	pinger.Timeout = *timeout
 	pinger.SetPrivileged(*privileged)
 
 	fmt.Printf("PING %s (%s):\n", pinger.Addr(), pinger.IPAddr())
-	pinger.Run()
+	pinger.Run(ctx)
 }

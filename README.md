@@ -3,24 +3,41 @@
 [![Circle CI](https://circleci.com/gh/sparrc/go-ping.svg?style=svg)](https://circleci.com/gh/sparrc/go-ping)
 
 ICMP Ping library for Go, inspired by
-[go-fastping](https://github.com/tatsushid/go-fastping)
+[https://github.com/sparrc/go-ping](https://github.com/sparrc/go-ping)
 
 Here is a very simple example that sends & receives 3 packets:
 
 ```go
-pinger, err := ping.NewPinger("www.google.com")
+pinger, err := ping.NewPinger("www.google.com", ping.CountOption(3))
 if err != nil {
         panic(err)
 }
-pinger.Count = 3
-pinger.Run() // blocks until finished
+
+ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+defer cancel()
+pinger.Run(ctx) // blocks until finished
 stats := pinger.Statistics() // get send/receive/rtt stats
 ```
 
 Here is an example that emulates the unix ping command:
 
 ```go
-pinger, err := ping.NewPinger("www.google.com")
+
+options := []ping.PingerOption{
+        ping.RecvFuncOption(func(pkt *ping.Packet) {
+                fmt.Printf("%d bytes from %s: icmp_seq=%d time=%v\n",
+                        pkt.Nbytes, pkt.IPAddr, pkt.Seq, pkt.Rtt)
+        }),
+        ping.FinishFuncOption(func(stats *ping.Statistics) {
+                fmt.Printf("\n--- %s ping statistics ---\n", stats.Addr)
+                fmt.Printf("%d packets transmitted, %d packets received, %v%% packet loss\n",
+                        stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss)
+                fmt.Printf("round-trip min/avg/max/stddev = %v/%v/%v/%v\n",
+                        stats.MinRtt, stats.AvgRtt, stats.MaxRtt, stats.StdDevRtt)
+        }),
+}
+
+pinger, err := ping.NewPinger("www.google.com", ...options)
 if err != nil {
         panic(err)
 }
@@ -34,20 +51,10 @@ go func() {
 	}
 }()
 
-pinger.OnRecv = func(pkt *ping.Packet) {
-        fmt.Printf("%d bytes from %s: icmp_seq=%d time=%v\n",
-                pkt.Nbytes, pkt.IPAddr, pkt.Seq, pkt.Rtt)
-}
-pinger.OnFinish = func(stats *ping.Statistics) {
-        fmt.Printf("\n--- %s ping statistics ---\n", stats.Addr)
-        fmt.Printf("%d packets transmitted, %d packets received, %v%% packet loss\n",
-                stats.PacketsSent, stats.PacketsRecv, stats.PacketLoss)
-        fmt.Printf("round-trip min/avg/max/stddev = %v/%v/%v/%v\n",
-                stats.MinRtt, stats.AvgRtt, stats.MaxRtt, stats.StdDevRtt)
-}
+
 
 fmt.Printf("PING %s (%s):\n", pinger.Addr(), pinger.IPAddr())
-pinger.Run()
+pinger.Run(context.Background())
 ```
 
 It sends ICMP packet(s) and waits for a response. If it receives a response,
@@ -60,13 +67,13 @@ For a full ping example, see
 ## Installation:
 
 ```
-go get github.com/sparrc/go-ping
+go get github.com/seanhoughton/go-ping
 ```
 
 To install the native Go ping executable:
 
 ```bash
-go get github.com/sparrc/go-ping/...
+go get github.com/seanhoughton/go-ping/...
 $GOPATH/bin/ping
 ```
 
@@ -98,5 +105,5 @@ You must use `pinger.SetPrivileged(true)`, otherwise you will receive an error:
 Error listening for ICMP packets: socket: The requested protocol has not been configured into the system, or no implementation for it exists.
 ```
 
-This should without admin privileges. Tested on Windows 10.
+This should work without admin privileges. Tested on Windows 10.
 

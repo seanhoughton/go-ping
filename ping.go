@@ -137,6 +137,22 @@ func PacketSizeOption(packetSize int) PingerOption {
 	}
 }
 
+// RecvFuncOption sets the function to call when Pinger receives and processes a packet
+func RecvFuncOption(f func(*Packet)) PingerOption {
+	return func(pinger *Pinger) error {
+		pinger.onRecv = f
+		return nil
+	}
+}
+
+// FinishFuncOption sets the function to call when Pinger exits
+func FinishFuncOption(f func(*Statistics)) PingerOption {
+	return func(pinger *Pinger) error {
+		pinger.onFinish = f
+		return nil
+	}
+}
+
 // Pinger represents ICMP packet sender/receiver
 type Pinger struct {
 	// Interval is the wait time between each packet send. Default is 1s.
@@ -159,11 +175,11 @@ type Pinger struct {
 	// rtts is all of the Rtts
 	rtts []time.Duration
 
-	// OnRecv is called when Pinger receives and processes a packet
-	OnRecv func(*Packet)
+	// onRecv is called when Pinger receives and processes a packet
+	onRecv func(*Packet)
 
-	// OnFinish is called when Pinger exits
-	OnFinish func(*Statistics)
+	// onFinish is called when Pinger exits
+	onFinish func(*Statistics)
 
 	// Size of packet being sent
 	packetSize int
@@ -368,7 +384,7 @@ func (p *Pinger) Stop() {
 }
 
 func (p *Pinger) finish() {
-	handler := p.OnFinish
+	handler := p.onFinish
 	if handler != nil {
 		s := p.Statistics()
 		handler(s)
@@ -516,7 +532,7 @@ func (p *Pinger) processPacket(recv *packet) error {
 	}
 
 	p.rtts = append(p.rtts, outPkt.Rtt)
-	handler := p.OnRecv
+	handler := p.onRecv
 	if handler != nil {
 		handler(outPkt)
 	}

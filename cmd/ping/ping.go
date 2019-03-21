@@ -65,6 +65,7 @@ func main() {
 		}),
 		ping.CountOption(*count),
 		ping.IntervalOption(*interval),
+		ping.PrivilegedOption(*privileged),
 	}
 
 	pinger, err := ping.NewPinger(host, options...)
@@ -84,8 +85,6 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-
-	pinger.SetPrivileged(*privileged)
 
 	fmt.Printf("PING %s (%s):\n", pinger.Addr(), pinger.IPAddr())
 	pinger.Run(ctx)

@@ -153,6 +153,21 @@ func FinishFuncOption(f func(*Statistics)) PingerOption {
 	}
 }
 
+// PrivilegedOption sets the type of ping pinger will send.
+// false means pinger will send an "unprivileged" UDP ping.
+// true means pinger will send a "privileged" raw ICMP ping.
+// NOTE: setting to true requires that it be run with super-user privileges.
+func PrivilegedOption(privileged bool) PingerOption {
+	return func(pinger *Pinger) error {
+		if privileged {
+			pinger.network = "ip"
+		} else {
+			pinger.network = "udp"
+		}
+		return nil
+	}
+}
+
 // Pinger represents ICMP packet sender/receiver
 type Pinger struct {
 	// Interval is the wait time between each packet send. Default is 1s.
@@ -294,18 +309,6 @@ func (p *Pinger) SetAddr(addr string) error {
 // Addr returns the string ip address of the target host.
 func (p *Pinger) Addr() string {
 	return p.addr
-}
-
-// SetPrivileged sets the type of ping pinger will send.
-// false means pinger will send an "unprivileged" UDP ping.
-// true means pinger will send a "privileged" raw ICMP ping.
-// NOTE: setting to true requires that it be run with super-user privileges.
-func (p *Pinger) SetPrivileged(privileged bool) {
-	if privileged {
-		p.network = "ip"
-	} else {
-		p.network = "udp"
-	}
 }
 
 // Privileged returns whether pinger is running in privileged mode.

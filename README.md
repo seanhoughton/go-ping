@@ -99,7 +99,7 @@ and [the Go icmp library](https://godoc.org/golang.org/x/net/icmp) for more deta
 
 ## Note on Windows Support:
 
-You must use `pinger.SetPrivileged(true)`, otherwise you will receive an error:
+You must use `ping.PrivilegedOption(true)`, otherwise you will receive an error:
 
 ```
 Error listening for ICMP packets: socket: The requested protocol has not been configured into the system, or no implementation for it exists.
